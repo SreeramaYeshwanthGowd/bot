@@ -1,0 +1,47 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "0.0.1",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "packageName": "com.example.dpsbot.pilot",
+  "developer": {
+    "name": "Your Organization",
+    "websiteUrl": "https://your-company.example",
+    "privacyUrl": "https://your-company.example/privacy",
+    "termsOfUseUrl": "https://your-company.example/terms"
+  },
+  "name": {
+    "short": "DPSBotPilot",
+    "full": "DPSBot Pilot - Mention Card Test"
+  },
+  "description": {
+    "short": "Pilot bot that returns one Adaptive Card when mentioned.",
+    "full": "A limited DPSBot pilot used to verify Microsoft Teams, Azure Bot Service, and Azure Functions connectivity before adding Graph, Jira, storage, or Databricks integrations."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#2563EB",
+  "bots": [
+    {
+      "botId": "00000000-0000-0000-0000-000000000000",
+      "scopes": ["personal", "team"],
+      "isNotificationOnly": false,
+      "supportsFiles": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team"],
+          "commands": [
+            {
+              "title": "test",
+              "description": "Return the pilot Adaptive Card."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity"],
+  "validDomains": ["FUNCTIONAPP_NAME.azurewebsites.net"]
+}
