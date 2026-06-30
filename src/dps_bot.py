@@ -52,7 +52,7 @@ def find_group(access_token: str, display_name: str) -> dict | None:
 
 def list_group_owners(access_token: str, group_id: str) -> list[dict]:
     owners = []
-    url = f"{GRAPH_BASE_URL}/groups/{group_id}/owners"
+    url = f"{GRAPH_BASE_URL}/groups/{group_id}/owners/microsoft.graph.user"
     params = {"$select": "id,displayName,userPrincipalName,mail"}
 
     while url:
