@@ -1,61 +1,34 @@
-from datetime import datetime, timezone
-from typing import Optional
+INPUT_TEXT = "Input.Text"
 
 
-def build_pilot_card(
-    requester_name: Optional[str],
-    conversation_type: Optional[str],
-    channel_id: Optional[str],
-) -> dict:
-    requested_by = requester_name or "Unknown user"
-    conversation = conversation_type or "unknown"
-    channel = channel_id or "unknown"
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
+def build_request_card() -> dict:
+    # This dictionary is the Adaptive Card form shown when the user mentions DPSBot.
     return {
         "type": "AdaptiveCard",
-        "version": "1.4",
+        # Version 1.2 is conservative for Azure Portal Web Chat compatibility.
+        "version": "1.2",
+        "fallbackText": "DPSBot request form.",
         "body": [
             {
-                "type": "TextBlock",
-                "text": "DPSBot pilot is connected",
-                "weight": "Bolder",
-                "size": "Large",
-                "wrap": True,
+                "type": INPUT_TEXT,
+                "id": "catalog",
+                "placeholder": "Catalog",
             },
+            {"type": INPUT_TEXT, "id": "schema", "placeholder": "Schema"},
+            {"type": INPUT_TEXT, "id": "table", "placeholder": "Table"},
             {
-                "type": "TextBlock",
-                "text": (
-                    "Your Teams mention reached Azure Bot Service, "
-                    "Azure Functions, and the Python bot handler."
-                ),
-                "wrap": True,
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {"title": "Requested by", "value": requested_by},
-                    {"title": "Conversation", "value": conversation},
-                    {"title": "Teams channel", "value": channel},
-                    {"title": "UTC time", "value": timestamp},
-                ],
-            },
-            {
-                "type": "TextBlock",
-                "text": (
-                    "Pilot safety: no Microsoft Graph calls, no Jira calls, "
-                    "no Databricks calls, and no request data was stored."
-                ),
-                "isSubtle": True,
-                "wrap": True,
-                "spacing": "Medium",
+                "type": INPUT_TEXT,
+                "id": "message",
+                "placeholder": "Message",
+                "isMultiline": True,
             },
         ],
         "actions": [
+            # Input values are posted back in activity.value when the user clicks Submit.
             {
                 "type": "Action.Submit",
-                "title": "I can see the card",
-                "data": {"action": "pilot_ack"},
+                "title": "Submit",
+                "data": {"action": "submit_table_details"},
             }
         ],
     }
