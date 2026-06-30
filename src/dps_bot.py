@@ -13,6 +13,7 @@ GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 GRAPH_SELECT = "$select"
 OWNER_SELECT = "id,displayName,userPrincipalName,mail"
+JIRA_API_PATH = "/rest/api/3/issue"
 
 # Latest submitted values are kept only in this running Function worker's memory.
 LAST_CATALOG = ""
@@ -104,6 +105,85 @@ def owner_name(owner: dict) -> str:
     return owner.get("displayName") or owner.get("userPrincipalName") or owner.get("id") or "Owner"
 
 
+def owner_contact(owner: dict) -> str | None:
+    return owner.get("userPrincipalName") or owner.get("mail")
+
+
+def owner_reference(owner: dict) -> str:
+    contact = owner_contact(owner)
+    name = owner_name(owner)
+    return f"{name} <{contact}>" if contact else name
+
+
+def jira_description(text: str) -> dict:
+    return {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": line or " "}],
+            }
+            for line in text.splitlines()
+        ],
+    }
+
+
+def jira_issue_url(issue_key: str) -> str:
+    return f"{os.environ['JIRA_BASE_URL'].rstrip('/')}/browse/{issue_key}"
+
+
+def create_jira_issue(summary: str, description: str) -> dict:
+    jira_base_url = os.environ["JIRA_BASE_URL"].rstrip("/")
+    response = requests.post(
+        f"{jira_base_url}{JIRA_API_PATH}",
+        auth=(os.environ["JIRA_EMAIL"], os.environ["JIRA_API_TOKEN"]),
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        json={
+            "fields": {
+                "project": {"key": os.environ["JIRA_PROJECT_KEY"]},
+                "summary": summary,
+                "description": jira_description(description),
+                "issuetype": {"name": os.environ["JIRA_ISSUE_TYPE"]},
+            }
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def build_access_request_text(
+    owners: list[dict],
+    requester_name: str,
+    group_name: str,
+    catalog: str,
+    schema: str,
+    table: str,
+    message: str,
+    jira_issue: dict | None = None,
+) -> str:
+    owner_references = ", ".join(owner_reference(owner) for owner in owners)
+    requester = requester_name or "A user"
+    request_message = message or "No message provided."
+    lines = [
+        f"Owners: {owner_references}",
+        f"Requested by: {requester}",
+        f"Group: {group_name}",
+        f"Catalog: {catalog}",
+        f"Schema: {schema}",
+        f"Table: {table or 'Not provided'}",
+        f"Message: {request_message}",
+    ]
+
+    if jira_issue:
+        issue_key = jira_issue["key"]
+        lines.append(f"Jira: {issue_key} {jira_issue_url(issue_key)}")
+
+    lines.append("As you are the owner, kindly look into it.")
+    return "\n".join(lines)
+
+
 def build_owner_request_activity(
     owners: list[dict],
     requester_name: str,
@@ -112,6 +192,7 @@ def build_owner_request_activity(
     schema: str,
     table: str,
     message: str,
+    jira_issue: dict,
 ):
     mentions = []
     owner_texts = []
@@ -140,6 +221,7 @@ def build_owner_request_activity(
     owner_mentions = ", ".join(owner_texts)
     requester = requester_name or "A user"
     request_message = message or "No message provided."
+    issue_key = jira_issue["key"]
 
     activity = MessageFactory.text(
         "\n".join(
@@ -151,6 +233,7 @@ def build_owner_request_activity(
                 f"Schema: {schema}",
                 f"Table: {table or 'Not provided'}",
                 f"Message: {request_message}",
+                f"Jira: {issue_key} {jira_issue_url(issue_key)}",
                 "As you are the owner, kindly look into it.",
             ]
         )
@@ -211,6 +294,34 @@ class DPSBot(TeamsActivityHandler):
 
                 resolved_owners = [resolve_owner(access_token, owner) for owner in owners]
                 requester = getattr(turn_context.activity.from_property, "name", None)
+
+                description = build_access_request_text(
+                    resolved_owners,
+                    requester,
+                    group_name,
+                    LAST_CATALOG,
+                    LAST_SCHEMA,
+                    LAST_TABLE,
+                    LAST_MESSAGE,
+                )
+
+                try:
+                    jira_issue = create_jira_issue(
+                        f"DPSBot access request - {group_name}",
+                        description,
+                    )
+                    logging.warning(
+                        "DPSBot Jira issue created: key=%s group_name=%s",
+                        jira_issue.get("key"),
+                        group_name,
+                    )
+                except Exception:
+                    logging.exception("DPSBot Jira issue creation failed")
+                    await turn_context.send_activity(
+                        "Owner lookup succeeded, but Jira ticket creation failed. Check Application Insights logs."
+                    )
+                    return
+
                 await turn_context.send_activity(
                     build_owner_request_activity(
                         resolved_owners,
@@ -220,6 +331,7 @@ class DPSBot(TeamsActivityHandler):
                         LAST_SCHEMA,
                         LAST_TABLE,
                         LAST_MESSAGE,
+                        jira_issue,
                     )
                 )
             except Exception:
