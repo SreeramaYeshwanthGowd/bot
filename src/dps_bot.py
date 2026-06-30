@@ -131,6 +131,7 @@ def build_owner_request_activity(
                         aad_object_id=owner_id,
                     ),
                     text=mention_text,
+                    type="mention",
                 )
             )
         else:
@@ -143,8 +144,8 @@ def build_owner_request_activity(
     activity = MessageFactory.text(
         "\n".join(
             [
-                f"{owner_mentions}",
-                f"{requester} requested access.",
+                f"{owner_mentions}, please review this access request.",
+                f"Requested by: {requester}",
                 f"Group: {group_name}",
                 f"Catalog: {catalog}",
                 f"Schema: {schema}",
