@@ -4,6 +4,7 @@ import os
 import requests
 from botbuilder.core import CardFactory, MessageFactory, TurnContext
 from botbuilder.core.teams import TeamsActivityHandler
+from botbuilder.schema import ChannelAccount, Mention
 
 from src.cards import build_request_card
 
@@ -99,10 +100,62 @@ def resolve_owner(access_token: str, owner: dict) -> dict:
         return owner
 
 
-def owner_line(owner: dict) -> str:
-    name = owner.get("displayName") or owner.get("id") or "Unknown owner"
-    contact = owner.get("userPrincipalName") or owner.get("mail")
-    return f"- {name} <{contact}>" if contact else f"- {name}"
+def owner_name(owner: dict) -> str:
+    return owner.get("displayName") or owner.get("userPrincipalName") or owner.get("id") or "Owner"
+
+
+def build_owner_request_activity(
+    owners: list[dict],
+    requester_name: str,
+    group_name: str,
+    catalog: str,
+    schema: str,
+    table: str,
+    message: str,
+):
+    mentions = []
+    owner_texts = []
+
+    for owner in owners:
+        name = owner_name(owner)
+        owner_id = owner.get("id")
+
+        if owner_id:
+            mention_text = f"<at>{name}</at>"
+            owner_texts.append(mention_text)
+            mentions.append(
+                Mention(
+                    mentioned=ChannelAccount(
+                        id=owner_id,
+                        name=name,
+                        aad_object_id=owner_id,
+                    ),
+                    text=mention_text,
+                )
+            )
+        else:
+            owner_texts.append(name)
+
+    owner_mentions = ", ".join(owner_texts)
+    requester = requester_name or "A user"
+    request_message = message or "No message provided."
+
+    activity = MessageFactory.text(
+        "\n".join(
+            [
+                f"{owner_mentions}",
+                f"{requester} requested access.",
+                f"Group: {group_name}",
+                f"Catalog: {catalog}",
+                f"Schema: {schema}",
+                f"Table: {table or 'Not provided'}",
+                f"Message: {request_message}",
+                "As you are the owner, kindly look into it.",
+            ]
+        )
+    )
+    activity.entities = mentions
+    return activity
 
 
 class DPSBot(TeamsActivityHandler):
@@ -156,9 +209,17 @@ class DPSBot(TeamsActivityHandler):
                     return
 
                 resolved_owners = [resolve_owner(access_token, owner) for owner in owners]
-                owner_lines = "\n".join(owner_line(owner) for owner in resolved_owners)
+                requester = getattr(turn_context.activity.from_property, "name", None)
                 await turn_context.send_activity(
-                    f"Found owners for {group_name}:\n{owner_lines}"
+                    build_owner_request_activity(
+                        resolved_owners,
+                        requester,
+                        group_name,
+                        LAST_CATALOG,
+                        LAST_SCHEMA,
+                        LAST_TABLE,
+                        LAST_MESSAGE,
+                    )
                 )
             except Exception:
                 logging.exception("DPSBot owner lookup failed")
