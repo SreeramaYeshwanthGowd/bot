@@ -10,6 +10,8 @@ from src.cards import build_request_card
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
+GRAPH_SELECT = "$select"
+OWNER_SELECT = "id,displayName,userPrincipalName,mail"
 
 # Latest submitted values are kept only in this running Function worker's memory.
 LAST_CATALOG = ""
@@ -41,7 +43,7 @@ def find_group(access_token: str, display_name: str) -> dict | None:
         headers={"Authorization": f"Bearer {access_token}"},
         params={
             "$filter": f"displayName eq '{escaped_name}'",
-            "$select": "id,displayName",
+            GRAPH_SELECT: "id,displayName",
         },
         timeout=10,
     )
@@ -53,7 +55,7 @@ def find_group(access_token: str, display_name: str) -> dict | None:
 def list_group_owners(access_token: str, group_id: str) -> list[dict]:
     owners = []
     url = f"{GRAPH_BASE_URL}/groups/{group_id}/owners/microsoft.graph.user"
-    params = {"$select": "id,displayName,userPrincipalName,mail"}
+    params = {GRAPH_SELECT: OWNER_SELECT}
 
     while url:
         response = requests.get(
@@ -69,6 +71,32 @@ def list_group_owners(access_token: str, group_id: str) -> list[dict]:
         params = None
 
     return owners
+
+
+def get_user(access_token: str, user_id: str) -> dict:
+    response = requests.get(
+        f"{GRAPH_BASE_URL}/users/{user_id}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={GRAPH_SELECT: OWNER_SELECT},
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def resolve_owner(access_token: str, owner: dict) -> dict:
+    if owner.get("displayName") or owner.get("userPrincipalName") or owner.get("mail"):
+        return owner
+
+    owner_id = owner.get("id")
+    if not owner_id:
+        return owner
+
+    try:
+        return get_user(access_token, owner_id)
+    except requests.RequestException:
+        logging.warning("DPSBot could not resolve owner details for id=%s", owner_id)
+        return owner
 
 
 def owner_line(owner: dict) -> str:
@@ -127,7 +155,8 @@ class DPSBot(TeamsActivityHandler):
                     await turn_context.send_activity(f"No owners found for {group_name}.")
                     return
 
-                owner_lines = "\n".join(owner_line(owner) for owner in owners)
+                resolved_owners = [resolve_owner(access_token, owner) for owner in owners]
+                owner_lines = "\n".join(owner_line(owner) for owner in resolved_owners)
                 await turn_context.send_activity(
                     f"Found owners for {group_name}:\n{owner_lines}"
                 )
@@ -140,6 +169,4 @@ class DPSBot(TeamsActivityHandler):
 
         # Any normal message or @mention shows the request form card.
         activity = MessageFactory.attachment(CardFactory.adaptive_card(build_request_card()))
-        activity.text = "DPSBot request form."
-        activity.summary = "DPSBot request form."
         await turn_context.send_activity(activity)
