@@ -27,7 +27,7 @@ Teams message with @DPSBot
   -> Adaptive Card response in Teams
 ```
 
-Do not build these yet:
+Do not build these for the first connectivity milestone:
 
 - Microsoft Graph calls.
 - Graph application permissions.
@@ -40,7 +40,7 @@ Do not build these yet:
 - Audit channel posting.
 - App-wide Teams deployment.
 
-This keeps the first test small, reversible, and easy to explain to an admin.
+This keeps the first test small, reversible, and easy to explain to an admin. The Graph owner lookup pilot is a later step covered in section 17.
 
 ## 3. Permission Model For This Pilot
 
@@ -56,7 +56,7 @@ You need permission to create or use:
 - One Azure Bot resource on the free F0 tier.
 - One Entra App Registration with a client secret, unless your admin creates it for you.
 
-You do not need Microsoft Graph API permissions for this pilot.
+You do not need Microsoft Graph API permissions for the first connectivity pilot. Add them only when you start the owner lookup phase in section 17.
 
 ### Teams
 
@@ -139,7 +139,7 @@ Create the bot secret:
 5. Select `Add`.
 6. Copy the secret value immediately. You will not be able to see it again.
 
-Do not add Graph API permissions.
+Do not add Graph API permissions for the first connectivity test. Add them later only for the owner lookup phase in section 17.
 
 ## 7. Create Azure Resources
 
@@ -201,7 +201,7 @@ az functionapp config appsettings set \
     "MicrosoftAppTenantId=$TENANT_ID"
 ```
 
-For this pilot, do not enable Managed Identity for Graph, and do not grant Graph permissions.
+For the first connectivity test, do not enable Managed Identity for Graph, and do not grant Graph permissions. The later owner lookup phase uses Graph application permissions as described in section 17.
 
 ## 8. Deploy The Function Code
 
@@ -364,23 +364,41 @@ In your private pilot team's `General` channel, send:
 Expected result:
 
 - An Adaptive Card appears in the channel thread.
-- The card says the Teams message reached Azure Bot Service, Azure Functions, and the Python handler.
-- The card facts show conversation type and channel ID.
-- The card says no Graph, Jira, Databricks, or storage actions were performed.
+- The card shows only four input fields: `catalog`, `schema`, `table`, and `message`.
+- Submitting the card makes the bot reply: `Details captured.`
+- The submitted values are written to Application Insights logs for inspection.
 
 Optional submit test:
 
-1. Select `I can see the card`.
-2. Expected bot response: `Pilot button click received. Adaptive Card submit is working.`
+1. Enter test values in all four fields.
+2. Select `Submit`.
+3. Expected bot response: `Details captured.`
 
 ## 13. Observe Logs
 
+The Function App uses workspace-based Application Insights. The most reliable place to see the submitted form values is the Application Insights `Logs` blade, not the Azure Bot resource logs.
+
 Portal path:
 
-1. Open the Function App.
-2. Go to `Log stream`.
-3. Mention the bot again.
-4. Confirm the function invocation appears.
+1. Open Azure portal.
+2. Open the Application Insights resource named like the Function App, for example `dps-bot-func`.
+3. Open `Logs`.
+4. Run this query:
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(2h)
+| where AppRoleName == "dps-bot-func"
+| where Message contains "DPSBot submitted details"
+| order by TimeGenerated desc
+| project TimeGenerated, Message, SeverityLevel
+```
+
+Expected log line shape:
+
+```text
+DPSBot submitted details: {'catalog': '...', 'schema': '...', 'table': '...', 'message': '...'}
+```
 
 Useful things to check:
 
@@ -483,23 +501,217 @@ az group delete --name "$RESOURCE_GROUP"
 
 Then delete the app registration in Entra ID if it was created only for this pilot.
 
-## 17. What Comes After This Pilot
+## 17. Next Phase: Graph Owner Lookup Pilot
 
-Only after the card appears reliably should you add the next layer.
+Do this only after the basic form card appears reliably and `Details captured.` works.
+
+Goal for this phase:
+
+```text
+User enters catalog/schema/table/message
+  -> bot derives the expected UC group display name from the submitted fields
+  -> bot queries Microsoft Graph for that group
+  -> bot queries Microsoft Graph for the group owners
+  -> bot displays the owner names back in the same Teams thread
+```
+
+For the first owner lookup test, use a schema-level group like the screenshot:
+
+```text
+UC|Sch|<catalog>.<schema>|Write
+```
+
+Example:
+
+```text
+UC|Sch|aba_az_ne_prod.msgraph_cleansed|Write
+```
+
+The current card also asks for `table`. For this schema-level pilot, keep collecting `table` and `message`, but build the first Graph lookup from `catalog` and `schema` only. If you later need table-level ownership, use a separate pattern such as:
+
+```text
+UC|Tbl|<catalog>.<schema>.<table>|Write
+```
+
+### 17.1 You Create A Sample UC-Style Group
+
+Portal path:
+
+1. Azure portal -> `Microsoft Entra ID`.
+2. Open `Groups`.
+3. Select `New group`.
+4. Group type: `Security`.
+5. Group name: `UC|Sch|aba_az_ne_prod.msgraph_cleansed|Write`.
+6. Group description: `Entra group for aba_az_ne_prod.msgraph_cleansed with Write access level.`
+7. Membership type: `Assigned`.
+8. Owners: add yourself.
+9. Members: leave empty for this owner-lookup pilot unless you also want to test membership later.
+10. Create the group.
+
+Save these values from the group Overview page:
+
+- Display name.
+- Object ID.
+- Owner count.
+
+For the first bot test, enter these values in the Adaptive Card:
+
+```text
+catalog: aba_az_ne_prod
+schema: msgraph_cleansed
+table: sample_table
+message: test owner lookup
+```
+
+The bot should derive and query this existing group display name:
+
+```text
+UC|Sch|aba_az_ne_prod.msgraph_cleansed|Write
+```
+
+### 17.2 Add Microsoft Graph Permissions To The Bot App
+
+Use the same Entra app registration that backs the Azure Bot resource and Function App settings.
+
+Portal path:
+
+1. Azure portal -> `Microsoft Entra ID`.
+2. Open `App registrations`.
+3. Open the DPSBot app registration.
+4. Open `API permissions`.
+5. Select `Add a permission`.
+6. Choose `Microsoft Graph`.
+7. Choose `Application permissions`.
+8. Add these permissions:
+   - `Group.Read.All`
+   - `GroupMember.Read.All`
+9. Select `Add permissions`.
+10. Select `Grant admin consent` for the tenant.
+
+Why these permissions:
+
+- `Group.Read.All` lets the app find the group by display name.
+- `GroupMember.Read.All` lets the app read group owners.
+
+Do not add broad permissions such as `Directory.ReadWrite.All` for this pilot.
+
+### 17.3 Confirm Function App Settings
+
+The Function App already needs these settings for bot authentication, and the owner lookup can reuse them for Graph client credentials:
+
+```text
+MicrosoftAppId
+MicrosoftAppPassword
+MicrosoftAppTenantId
+```
+
+Confirm they are configured on the Function App:
+
+```bash
+az functionapp config appsettings list \
+  --name "$FUNCTIONAPP_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query "[?name=='MicrosoftAppId' || name=='MicrosoftAppTenantId' || name=='MicrosoftAppPassword'].{name:name,configured:length(value) > \`0\`}" \
+  -o table
+```
+
+Do not print or paste the secret value into chat, screenshots, logs, or documentation.
+
+### 17.4 Graph Calls The Bot Will Need
+
+The code change for this phase should do these calls with the app-only client credentials flow.
+
+Token endpoint:
+
+```text
+POST https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token
+```
+
+Token request fields:
+
+```text
+client_id=<MicrosoftAppId>
+client_secret=<MicrosoftAppPassword>
+scope=https://graph.microsoft.com/.default
+grant_type=client_credentials
+```
+
+Find the group by exact display name:
+
+```http
+GET https://graph.microsoft.com/v1.0/groups?$filter=displayName eq 'UC|Sch|aba_az_ne_prod.msgraph_cleansed|Write'&$select=id,displayName
+```
+
+Then list the group owners:
+
+```http
+GET https://graph.microsoft.com/v1.0/groups/<group-id>/owners?$select=id,displayName,userPrincipalName,mail
+```
+
+Expected bot output for this pilot can be simple text, for example:
+
+```text
+Found owners for UC|Sch|aba_az_ne_prod.msgraph_cleansed|Write:
+- Owner Name <owner@company.com>
+```
+
+If no owners are found, the bot should say:
+
+```text
+No owners found for UC|Sch|aba_az_ne_prod.msgraph_cleansed|Write.
+```
+
+If the group is not found, the bot should say:
+
+```text
+No matching group found for UC|Sch|aba_az_ne_prod.msgraph_cleansed|Write.
+```
+
+### 17.5 Code Update Checklist For The Next Step
+
+When you implement the owner lookup, keep the change small:
+
+1. Keep the existing Adaptive Card fields: `catalog`, `schema`, `table`, and `message`.
+2. On submit, derive the existing group display name: `UC|Sch|{catalog}.{schema}|Write`.
+3. Request a Graph token using `MicrosoftAppId`, `MicrosoftAppPassword`, and `MicrosoftAppTenantId`.
+4. Query Graph for the group by exact display name.
+5. Query Graph for owners using the returned group ID.
+6. Send owner names and email/UPN back to the same Teams thread.
+7. Log the group name, group ID, and owner count; do not log secrets or access tokens.
+
+Suggested dependency if using HTTP calls from Python:
+
+```text
+requests
+```
+
+Add it to `requirements.txt` only when you implement the Graph calls.
+
+### 17.6 Rollback For This Phase
+
+If the Graph test is not approved or does not work:
+
+1. Remove the Graph API permissions from the app registration.
+2. Remove admin consent if your tenant process requires it.
+3. Delete the sample UC-style group.
+4. Revert the code to the form-only version.
+
+## 18. What Comes After The Owner Lookup Pilot
+
+Only after owner lookup works should you add the next layer.
 
 Suggested order:
 
-1. Add a two-step Adaptive Card flow in the same Teams thread.
-2. Add Azure Table Storage for simple session state.
-3. Add an audit channel, still without Graph proactive DMs.
-4. Add Graph read permissions for group lookup only.
-5. Add owner resolution from `UC|Sch|catalog.schema|Read` groups.
-6. Add owner approval cards.
-7. Add Jira integration.
+1. Add a cleaner owner response card in the same Teams thread.
+2. Add owner mention formatting in Teams.
+3. Add Azure Table Storage for simple request/session state.
+4. Add an audit channel, still without proactive DMs.
+5. Add owner approval cards.
+6. Add Jira integration.
 
 This order keeps permissions review manageable.
 
-## 18. Questions To Confirm Before You Touch The Org Tenant
+## 19. Questions To Confirm Before You Touch The Org Tenant
 
 Ask or verify these before you deploy:
 
