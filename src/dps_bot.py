@@ -75,18 +75,8 @@ def find_group_owners(access_token: str, display_name: str) -> tuple[dict | None
     return group, owners
 
 
-def owner_name(owner: dict) -> str:
-    return owner.get("displayName") or owner.get("userPrincipalName") or owner.get("id") or "Owner"
-
-
-def owner_contact(owner: dict) -> str | None:
-    return owner.get("userPrincipalName") or owner.get("mail")
-
-
 def owner_reference(owner: dict) -> str:
-    contact = owner_contact(owner)
-    name = owner_name(owner)
-    return f"{name} <{contact}>" if contact else name
+    return f"{owner['displayName']} <{owner.get('userPrincipalName') or owner['mail']}>"
 
 
 def jira_description(text: str) -> dict:
@@ -172,7 +162,7 @@ def build_owner_request_activity(
     owner_texts = []
 
     for owner in owners:
-        name = owner_name(owner)
+        name = owner["displayName"]
         owner_id = owner.get("id")
 
         if owner_id:
