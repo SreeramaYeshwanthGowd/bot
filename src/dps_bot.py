@@ -1,4 +1,3 @@
-import logging
 import os
 
 import requests
@@ -22,10 +21,9 @@ LAST_TABLE = ""
 LAST_MESSAGE = ""
 
 
-def get_graph_token() -> str:
-    tenant_id = os.environ["MicrosoftAppTenantId"]
-    response = requests.post(
-        f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+def get_graph_token():
+    return requests.post(
+        f"https://login.microsoftonline.com/{os.environ['MicrosoftAppTenantId']}/oauth2/v2.0/token",
         data={
             "client_id": os.environ["MicrosoftAppId"],
             "client_secret": os.environ["MicrosoftAppPassword"],
@@ -33,9 +31,7 @@ def get_graph_token() -> str:
             "grant_type": "client_credentials",
         },
         timeout=10,
-    )
-    response.raise_for_status()
-    return response.json()["access_token"]
+    ).json()["access_token"]
 
 
 def find_group_owners(access_token: str, display_name: str) -> tuple[dict | None, list[dict]]:
@@ -90,9 +86,8 @@ def jira_issue_url(issue_key: str) -> str:
 
 
 def create_jira_issue(summary: str, description: str) -> dict:
-    jira_base_url = os.environ["JIRA_BASE_URL"].rstrip("/")
-    response = requests.post(
-        f"{jira_base_url}{JIRA_API_PATH}",
+    return requests.post(
+        f"{os.environ['JIRA_BASE_URL'].rstrip('/')}{JIRA_API_PATH}",
         auth=(os.environ["JIRA_EMAIL"], os.environ["JIRA_API_TOKEN"]),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
         json={
@@ -104,9 +99,7 @@ def create_jira_issue(summary: str, description: str) -> dict:
             }
         },
         timeout=15,
-    )
-    response.raise_for_status()
-    return response.json()
+    ).json()
 
 
 def build_access_request_text(
@@ -174,21 +167,18 @@ def build_owner_request_activity(
         else:
             owner_texts.append(name)
 
-    owner_mentions = ", ".join(owner_texts)
-    requester = requester_name or "A user"
-    request_message = message or "No message provided."
     issue_key = jira_issue["key"]
 
     activity = MessageFactory.text(
         "\n".join(
             [
-                f"{owner_mentions}, please review this access request.",
-                f"Requested by: {requester}",
+                f"{', '.join(owner_texts)}, please review this access request.",
+                f"Requested by: {requester_name or 'A user'}",
                 f"Group: {group_name}",
                 f"Catalog: {catalog}",
                 f"Schema: {schema}",
                 f"Table: {table or 'Not provided'}",
-                f"Message: {request_message}",
+                f"Message: {message or 'No message provided.'}",
                 f"Jira: {issue_key} {jira_issue_url(issue_key)}",
                 "As you are the owner, kindly look into it.",
             ]
@@ -202,7 +192,6 @@ class DPSBot(TeamsActivityHandler):
     async def on_message_activity(self, turn_context: TurnContext) -> None:
         global LAST_CATALOG, LAST_SCHEMA, LAST_TABLE, LAST_MESSAGE
 
-        # Adaptive Card submits arrive here with form values in activity.value.
         submitted_value = turn_context.activity.value
         if isinstance(submitted_value, dict) and submitted_value.get("action") == "submit_table_details":
             LAST_CATALOG = str(submitted_value.get("catalog", "")).strip()
@@ -216,8 +205,6 @@ class DPSBot(TeamsActivityHandler):
                 "table": LAST_TABLE,
                 "message": LAST_MESSAGE,
             }
-
-            logging.warning("DPSBot submitted details: %s", captured)
             print(f"DPSBot submitted details: {captured}")
 
             if not LAST_CATALOG or not LAST_SCHEMA:
@@ -225,31 +212,28 @@ class DPSBot(TeamsActivityHandler):
                 return
 
             group_name = f"UC|Sch|{LAST_CATALOG}.{LAST_SCHEMA}|Write"
+            group, owners = find_group_owners(get_graph_token(), group_name)
+            if not group:
+                await turn_context.send_activity(f"No matching group found for {group_name}.")
+                return
 
-            try:
-                access_token = get_graph_token()
-                group, owners = find_group_owners(access_token, group_name)
+            if not owners:
+                await turn_context.send_activity(f"No owners found for {group_name}.")
+                return
 
-                if not group:
-                    await turn_context.send_activity(
-                        f"No matching group found for {group_name}."
-                    )
-                    return
-
-                logging.warning(
-                    "DPSBot owner lookup: group_name=%s group_id=%s owner_count=%s",
-                    group_name,
-                    group["id"],
-                    len(owners),
-                )
-
-                if not owners:
-                    await turn_context.send_activity(f"No owners found for {group_name}.")
-                    return
-
-                requester = getattr(turn_context.activity.from_property, "name", None)
-
-                description = build_access_request_text(
+            requester = getattr(turn_context.activity.from_property, "name", None)
+            description = build_access_request_text(
+                owners,
+                requester,
+                group_name,
+                LAST_CATALOG,
+                LAST_SCHEMA,
+                LAST_TABLE,
+                LAST_MESSAGE,
+            )
+            jira_issue = create_jira_issue(f"DPSBot access request - {group_name}", description)
+            await turn_context.send_activity(
+                build_owner_request_activity(
                     owners,
                     requester,
                     group_name,
@@ -257,44 +241,10 @@ class DPSBot(TeamsActivityHandler):
                     LAST_SCHEMA,
                     LAST_TABLE,
                     LAST_MESSAGE,
+                    jira_issue,
                 )
-
-                try:
-                    jira_issue = create_jira_issue(
-                        f"DPSBot access request - {group_name}",
-                        description,
-                    )
-                    logging.warning(
-                        "DPSBot Jira issue created: key=%s group_name=%s",
-                        jira_issue.get("key"),
-                        group_name,
-                    )
-                except Exception:
-                    logging.exception("DPSBot Jira issue creation failed")
-                    await turn_context.send_activity(
-                        "Owner lookup succeeded, but Jira ticket creation failed. Check Application Insights logs."
-                    )
-                    return
-
-                await turn_context.send_activity(
-                    build_owner_request_activity(
-                        owners,
-                        requester,
-                        group_name,
-                        LAST_CATALOG,
-                        LAST_SCHEMA,
-                        LAST_TABLE,
-                        LAST_MESSAGE,
-                        jira_issue,
-                    )
-                )
-            except Exception:
-                logging.exception("DPSBot owner lookup failed")
-                await turn_context.send_activity(
-                    "Owner lookup failed. Check Application Insights logs."
-                )
+            )
             return
 
-        # Any normal message or @mention shows the request form card.
         activity = MessageFactory.attachment(CardFactory.adaptive_card(build_request_card()))
         await turn_context.send_activity(activity)
