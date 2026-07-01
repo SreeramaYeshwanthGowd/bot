@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -33,15 +34,16 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
     auth_header = req.headers.get("Authorization", "")
 
     # The adapter validates the request, creates a turn context, and calls BOT.on_turn.
-    await ADAPTER.process_activity(activity, auth_header, BOT.on_turn)
+    invoke_response = await ADAPTER.process_activity(activity, auth_header, BOT.on_turn)
+    if invoke_response:
+        body = invoke_response.body
+        if hasattr(body, "serialize"):
+            body = body.serialize()
+        return func.HttpResponse(
+            body=json.dumps(body),
+            status_code=invoke_response.status,
+            mimetype="application/json",
+        )
 
     # Normal message activities are acknowledged with HTTP 200 after the bot sends its reply.
     return func.HttpResponse(status_code=200)
-    
-    # If a user mentions @bot inteam from their own chat or from any where then 
-    # query the owners of the UC group with graph API (https://learn.microsoft.com/en-us/azure/governance/resource-graph/first-query-rest-api?tabs=powershell)
-    # prep the request body json with the details of the request.
-    # run a query to graph API to get the owners of the UC group with REST API URI
-    # with owner details in the request body json, mention the owners in the same thread saying As you are the owner of so and so group please approve the request.
-
-    # mention them in the same thread. saying As you are the owner of so and so group please approve the request..
