@@ -39,18 +39,17 @@ def get_graph_token() -> str:
 
 
 def find_group_owners(access_token: str, display_name: str) -> tuple[dict | None, list[dict]]:
-    escaped_name = display_name.replace("'", "''")
-    response = requests.get(
+    headers = {"Authorization": f"Bearer {access_token}"}
+    groups = requests.get(
         f"{GRAPH_BASE_URL}/groups",
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers=headers,
         params={
-            "$filter": f"displayName eq '{escaped_name}'",
+            "$filter": "displayName eq '{}'".format(display_name.replace("'", "''")),
             GRAPH_SELECT: "id,displayName",
         },
         timeout=10,
-    )
-    response.raise_for_status()
-    groups = response.json().get("value", [])
+    ).json().get("value", [])
+
     if not groups:
         return None, []
 
@@ -60,14 +59,7 @@ def find_group_owners(access_token: str, display_name: str) -> tuple[dict | None
     params = {GRAPH_SELECT: OWNER_SELECT}
 
     while url:
-        response = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {access_token}"},
-            params=params,
-            timeout=10,
-        )
-        response.raise_for_status()
-        data = response.json()
+        data = requests.get(url, headers=headers, params=params, timeout=10).json()
         owners.extend(data.get("value", []))
         url = data.get("@odata.nextLink")
         params = None
