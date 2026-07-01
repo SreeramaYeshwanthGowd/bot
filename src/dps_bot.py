@@ -38,7 +38,7 @@ def get_graph_token() -> str:
     return response.json()["access_token"]
 
 
-def find_group(access_token: str, display_name: str) -> dict | None:
+def find_group_owners(access_token: str, display_name: str) -> tuple[dict | None, list[dict]]:
     escaped_name = display_name.replace("'", "''")
     response = requests.get(
         f"{GRAPH_BASE_URL}/groups",
@@ -51,12 +51,12 @@ def find_group(access_token: str, display_name: str) -> dict | None:
     )
     response.raise_for_status()
     groups = response.json().get("value", [])
-    return groups[0] if groups else None
+    if not groups:
+        return None, []
 
-
-def list_group_owners(access_token: str, group_id: str) -> list[dict]:
+    group = groups[0]
     owners = []
-    url = f"{GRAPH_BASE_URL}/groups/{group_id}/owners/microsoft.graph.user"
+    url = f"{GRAPH_BASE_URL}/groups/{group['id']}/owners/microsoft.graph.user"
     params = {GRAPH_SELECT: OWNER_SELECT}
 
     while url:
@@ -72,7 +72,7 @@ def list_group_owners(access_token: str, group_id: str) -> list[dict]:
         url = data.get("@odata.nextLink")
         params = None
 
-    return owners
+    return group, owners
 
 
 def owner_name(owner: dict) -> str:
@@ -246,7 +246,7 @@ class DPSBot(TeamsActivityHandler):
 
             try:
                 access_token = get_graph_token()
-                group = find_group(access_token, group_name)
+                group, owners = find_group_owners(access_token, group_name)
 
                 if not group:
                     await turn_context.send_activity(
@@ -254,7 +254,6 @@ class DPSBot(TeamsActivityHandler):
                     )
                     return
 
-                owners = list_group_owners(access_token, group["id"])
                 logging.warning(
                     "DPSBot owner lookup: group_name=%s group_id=%s owner_count=%s",
                     group_name,
