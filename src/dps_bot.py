@@ -75,32 +75,6 @@ def list_group_owners(access_token: str, group_id: str) -> list[dict]:
     return owners
 
 
-def get_user(access_token: str, user_id: str) -> dict:
-    response = requests.get(
-        f"{GRAPH_BASE_URL}/users/{user_id}",
-        headers={"Authorization": f"Bearer {access_token}"},
-        params={GRAPH_SELECT: OWNER_SELECT},
-        timeout=10,
-    )
-    response.raise_for_status()
-    return response.json()
-
-
-def resolve_owner(access_token: str, owner: dict) -> dict:
-    if owner.get("displayName") or owner.get("userPrincipalName") or owner.get("mail"):
-        return owner
-
-    owner_id = owner.get("id")
-    if not owner_id:
-        return owner
-
-    try:
-        return get_user(access_token, owner_id)
-    except requests.RequestException:
-        logging.warning("DPSBot could not resolve owner details for id=%s", owner_id)
-        return owner
-
-
 def owner_name(owner: dict) -> str:
     return owner.get("displayName") or owner.get("userPrincipalName") or owner.get("id") or "Owner"
 
@@ -292,11 +266,10 @@ class DPSBot(TeamsActivityHandler):
                     await turn_context.send_activity(f"No owners found for {group_name}.")
                     return
 
-                resolved_owners = [resolve_owner(access_token, owner) for owner in owners]
                 requester = getattr(turn_context.activity.from_property, "name", None)
 
                 description = build_access_request_text(
-                    resolved_owners,
+                    owners,
                     requester,
                     group_name,
                     LAST_CATALOG,
@@ -324,7 +297,7 @@ class DPSBot(TeamsActivityHandler):
 
                 await turn_context.send_activity(
                     build_owner_request_activity(
-                        resolved_owners,
+                        owners,
                         requester,
                         group_name,
                         LAST_CATALOG,
