@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 
@@ -34,16 +33,7 @@ async def messages(req: func.HttpRequest) -> func.HttpResponse:
     auth_header = req.headers.get("Authorization", "")
 
     # The adapter validates the request, creates a turn context, and calls BOT.on_turn.
-    invoke_response = await ADAPTER.process_activity(activity, auth_header, BOT.on_turn)
-    if invoke_response:
-        body = invoke_response.body
-        if hasattr(body, "serialize"):
-            body = body.serialize()
-        return func.HttpResponse(
-            body=json.dumps(body),
-            status_code=invoke_response.status,
-            mimetype="application/json",
-        )
+    await ADAPTER.process_activity(activity, auth_header, BOT.on_turn)
 
     # Normal message activities are acknowledged with HTTP 200 after the bot sends its reply.
     return func.HttpResponse(status_code=200)

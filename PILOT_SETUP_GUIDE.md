@@ -585,6 +585,7 @@ Portal path:
 8. Add these permissions:
    - `Group.Read.All`
    - `GroupMember.Read.All`
+  - `User.Read.All`
 9. Select `Add permissions`.
 10. Select `Grant admin consent` for the tenant.
 
@@ -592,6 +593,7 @@ Why these permissions:
 
 - `Group.Read.All` lets the app find the group by display name.
 - `GroupMember.Read.All` lets the app read group owners.
+- `User.Read.All` lets the app resolve owner IDs into user fields such as `displayName`, `userPrincipalName`, and `mail`.
 
 Do not add broad permissions such as `Directory.ReadWrite.All` for this pilot.
 
